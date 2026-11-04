@@ -151,8 +151,9 @@ def extract_address(html: str) -> str:
 def lookup(cin: str, name: str):
     """Return (address, url, status)."""
     urls = [
+        f"https://www.zaubacorp.com/company/{cin}",
+        f"https://www.zaubacorp.com/{slugify(name)}-{cin}",
         f"https://www.zaubacorp.com/company/{slugify(name)}/{cin}",
-        f"https://www.zaubacorp.com/company/-/{cin}",
     ]
     last_status = ""
     for url in urls:
