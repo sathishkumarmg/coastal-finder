@@ -59,7 +59,7 @@ if uploaded and st.button("Find coastal companies", type="primary"):
 
     mins = max(1, round(len(items) * 3.3 / 60))
     st.info(f"{total:,} rows in the file. {len(items):,} are in Karnataka and "
-            f"will be checked. This takes about **{mins} minutes**. Keep this "
+            f"will be checked. This takes about **{mins} minute{"s" if mins != 1 else ""}**. Keep this "
             f"tab open. If it closes, upload the file again and it will "
             f"continue from where it stopped.")
 
