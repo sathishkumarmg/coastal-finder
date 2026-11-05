@@ -148,8 +148,8 @@ def extract_address(html: str) -> str:
     return ""
 
 
-def lookup(cin: str, name: str):
-    """Return (address, url, status)."""
+def zauba_lookup(cin: str, name: str):
+    """Zaubacorp page scrape. Return (address, url, status)."""
     urls = [
         f"https://www.zaubacorp.com/company/{cin}",
         f"https://www.zaubacorp.com/{slugify(name)}-{cin}",
@@ -173,6 +173,70 @@ def lookup(cin: str, name: str):
             last_status = f"HTTP {r.status_code}"
     return "", urls[0], last_status
 
+
+
+# --------------------------------------------------------------------------
+# Address lookup (Infyner API) - used when an API key is set
+# --------------------------------------------------------------------------
+INFYNER_BASES = ["https://www.infyner.com", "https://api.infyner.com"]
+
+
+def infyner_key():
+    return os.environ.get("INFYNER_API_KEY", "").strip()
+
+
+def join_address(a):
+    """Infyner may return the address as text or as {city, state, pincode, ...}."""
+    if isinstance(a, dict):
+        order = ("line1", "line2", "address", "street", "locality", "area",
+                 "city", "district", "state", "pincode", "pin", "zip")
+        parts = [str(a[k]) for k in order if a.get(k)]
+        for v in a.values():
+            if isinstance(v, (str, int)) and v and str(v) not in parts:
+                parts.append(str(v))
+        return ", ".join(parts)
+    return str(a or "").strip()
+
+
+def infyner_lookup(cin, name):
+    headers = {"Authorization": f"Bearer {infyner_key()}",
+               "Accept": "application/json"}
+    last, url = "", ""
+    for base in INFYNER_BASES:
+        url = f"{base}/v1/companies/{cin}"
+        try:
+            r = requests.get(url, headers=headers, timeout=25)
+        except requests.RequestException as e:
+            last = f"error: {e.__class__.__name__}"
+            continue
+        try:
+            j = r.json()
+        except ValueError:
+            last = f"HTTP {r.status_code} (not JSON)"
+            continue
+        data = j.get("data") if isinstance(j, dict) else None
+        if isinstance(j, dict) and j.get("success") and data:
+            addr = join_address(data.get("registered_address") or data.get("address"))
+            return addr, url, "ok" if addr else "found, no address"
+        # Error responses only from here (company names contain "LIMITED",
+        # so these word checks must not run on successful responses)
+        text = json.dumps(j).lower()
+        if r.status_code in (401, 403) or "unauthorized" in text:
+            return "", url, "stop: API key rejected"
+        if r.status_code in (402, 429) or "rate_limit" in text or "limit" in text \
+                or "insufficient" in text or "quota" in text:
+            return "", url, "stop: daily limit or credits used up"
+        if "not_found" in text or r.status_code == 404:
+            return "", url, "not found in Infyner"
+        last = f"HTTP {r.status_code}: {text[:80]}"
+    return "", url, last
+
+
+def lookup(cin, name):
+    """Use Infyner when an API key is configured, otherwise Zaubacorp."""
+    if infyner_key():
+        return infyner_lookup(cin, name)
+    return zauba_lookup(cin, name)
 
 # --------------------------------------------------------------------------
 # Reading the MCA file
@@ -228,8 +292,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file", nargs="?")
     ap.add_argument("--include-llps", action="store_true")
-    ap.add_argument("--delay", type=float, default=2.5)
+    ap.add_argument("--delay", type=float, default=None)
+    ap.add_argument("--infyner-key", default="")
     args = ap.parse_args()
+    if args.infyner_key:
+        os.environ["INFYNER_API_KEY"] = args.infyner_key
+    if args.delay is None:
+        args.delay = 0.3 if infyner_key() else 2.5
+    print("Using", "Infyner API" if infyner_key() else "Zaubacorp website", "for addresses")
 
     path = args.file or pick_file()
     if not path or not os.path.exists(path):
@@ -245,8 +315,11 @@ def main():
 
     coastal, review = [], []
     total = karnataka = 0
+    stop_all = False
 
     for df in load_rows(path):
+        if stop_all:
+            break
         id_col = find_col(df, "cin", "llpin") or df.columns[0]
         name_col = find_col(df, "name")
         addr_col = find_col(df, "address")
@@ -287,6 +360,10 @@ def main():
                 if i % 10 == 0:
                     with open(cache_path, "w", encoding="utf-8") as f:
                         json.dump(cache, f)
+                if status.startswith("stop:"):
+                    print(f"\nStopping: {status[6:]}. Run again later - it resumes.")
+                    stop_all = True
+                    break
                 if status.startswith("blocked"):
                     print("  Site is blocking requests. Pausing 2 minutes...")
                     time.sleep(120)
