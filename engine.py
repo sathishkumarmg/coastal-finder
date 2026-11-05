@@ -7,8 +7,9 @@ import time
 
 import pandas as pd
 
+import coastal_companies as cc
 from coastal_companies import (CIN_RE, LLPIN_RE, classify, find_col,
-                               load_rows, lookup)
+                               load_rows)
 
 CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "lookup_cache.json")
@@ -61,7 +62,9 @@ def select_rows(file, include_llps=False):
     return items, total
 
 
-def process(items, delay=2.5, progress=None):
+def process(items, delay=None, progress=None):
+    if delay is None:
+        delay = 0.3 if cc.infyner_key() else 2.5
     cache = load_cache()
     coastal, review = [], []
     blocked_streak = 0
@@ -75,8 +78,11 @@ def process(items, delay=2.5, progress=None):
             c = cache[cid]
             address, url, status = c["address"], c["url"], "ok"
         else:
-            address, url, status = lookup(cid, name)
+            address, url, status = cc.lookup(cid, name)
             cache[cid] = {"address": address, "url": url, "status": status}
+            if status.startswith("stop:"):
+                stopped = status[6:]
+                break
             if i % 10 == 0:
                 save_cache(cache)
             if status.startswith("blocked"):
