@@ -3,6 +3,14 @@ import os
 import pandas as pd
 import streamlit as st
 
+# API key for Infyner (set INFYNER_API_KEY in Streamlit Secrets)
+try:
+    if st.secrets.get("INFYNER_API_KEY", ""):
+        os.environ["INFYNER_API_KEY"] = st.secrets["INFYNER_API_KEY"]
+except Exception:
+    pass
+
+import coastal_companies as cc
 from engine import process, select_rows, to_excel_bytes
 
 st.set_page_config(page_title="Coastal company finder", page_icon="🌊",
@@ -57,7 +65,8 @@ if uploaded and st.button("Find coastal companies", type="primary"):
         st.warning("No Karnataka companies were found in this file.")
         st.stop()
 
-    mins = max(1, round(len(items) * 3.3 / 60))
+    per = 0.6 if cc.infyner_key() else 3.3
+    mins = max(1, round(len(items) * per / 60))
     st.info(f"{total:,} rows in the file. {len(items):,} are in Karnataka and "
             f"will be checked. This takes about **{mins} minute{"s" if mins != 1 else ""}**. Keep this "
             f"tab open. If it closes, upload the file again and it will "
@@ -79,7 +88,11 @@ if uploaded and st.button("Find coastal companies", type="primary"):
 # ---------------- Results ----------------
 if "result" in st.session_state:
     r = st.session_state.result
-    if r["stopped"] == "blocked":
+    if r["stopped"] and r["stopped"] != "blocked":
+        st.warning(f"Lookups paused: {r['stopped']}. Download what was found so "
+                   "far. To finish, upload the same file again tomorrow; it "
+                   "skips the companies already checked.")
+    elif r["stopped"] == "blocked":
         st.error("The company lookup site started blocking requests, so the "
                  "run stopped early. Download what was found so far, then try "
                  "again later. The unchecked companies are listed in the "
